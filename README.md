@@ -18,4 +18,4 @@ Options:
 - `--width`: Width of the video stream (default: 1280).
 - `--height`: Height of the video stream (default: 720).
 
-Height and width must match the resolution of the webcam. (findable with `v4l2-ctl --list-formats-ext -d /dev/video0`)
+Height and width must match one of the resolutions of the webcam. (findable with `v4l2-ctl --list-formats-ext -d /dev/video0`)
