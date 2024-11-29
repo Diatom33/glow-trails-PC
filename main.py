@@ -1,18 +1,38 @@
 import torch
 import cv2
 import time
+import tkinter as tk
+import argparse
+import sys
 
-# Adjusted threshold to match normalized scale (0-1)
-# threshold = 0.85
-threshold=0.3
-decay = 0.95
+# Default configuration values
+DEFAULT_THRESHOLD = 0.3
+DEFAULT_DECAY = 0.95
+DEFAULT_WIDTH = 1280
+DEFAULT_HEIGHT = 720
+
+def str_to_bool(value: str) -> bool:
+    """
+    Convert a string representation of a boolean to a boolean value.
+    """
+    return value.lower() == 'true'
 
 class GlowTrails:
     def __init__(
         self, 
+        threshold: float = DEFAULT_THRESHOLD,
+        decay: float = DEFAULT_DECAY,
+        camera_width: int = DEFAULT_WIDTH,
+        camera_height: int = DEFAULT_HEIGHT,
+        mirror: bool = True,
         device: torch.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     ):
+        self.threshold = threshold
+        self.decay = decay
+        self.camera_width = camera_width
+        self.camera_height = camera_height
         self.device = device
+        self.mirror = mirror
         # Initialize the webcam with a specific backend to avoid GStreamer warning
         self.cap = cv2.VideoCapture(0, cv2.CAP_V4L2)  # Using V4L2 backend
         if not self.cap.isOpened():
@@ -25,11 +45,11 @@ class GlowTrails:
         else:
             print("MJPG format set successfully.")
 
-        # Set webcam resolution to Full HD
-        if not self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280):
-            print("Warning: Unable to set frame width to 1280.")
-        if not self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720):
-            print("Warning: Unable to set frame height to 720.")
+        # Set webcam resolution based on user input
+        if not self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, self.camera_width):
+            print(f"Warning: Unable to set frame width to {self.camera_width}.")
+        if not self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self.camera_height):
+            print(f"Warning: Unable to set frame height to {self.camera_height}.")
         
         # Set webcam's FPS
         if not self.cap.set(cv2.CAP_PROP_FPS, 30):
@@ -52,6 +72,18 @@ class GlowTrails:
         
         print(f"Using device: {self.device}")
 
+        # Retrieve screen dimensions
+        root = tk.Tk()
+        root.withdraw()  # Hide the root window
+        self.screen_width = root.winfo_screenwidth()
+        self.screen_height = root.winfo_screenheight()
+        root.destroy()
+        print(f"Screen Resolution: {self.screen_width}x{self.screen_height}")
+
+        # Create a named window with WINDOW_NORMAL to allow resizing
+        cv2.namedWindow('Output', cv2.WINDOW_NORMAL)
+        cv2.setWindowProperty('Output', cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN)
+
     def get_luminance(self, image: torch.Tensor) -> torch.Tensor:
         """
         Calculate the luminance of the image.
@@ -68,10 +100,10 @@ class GlowTrails:
         """
         with torch.no_grad():  # Disable gradient calculations for inference
             luminance = self.get_luminance(image_current)
-            mask = luminance > threshold  # Shape: (H, W)
+            mask = luminance > self.threshold  # Shape: (H, W)
             mask = mask.unsqueeze(0)  # Shape: (1, H, W)
             # Use in-place operations to reduce memory overhead
-            out = image_current * decay
+            out = image_current * self.decay
             out *= mask
             out += image_next * ~mask
         return out
@@ -116,8 +148,19 @@ class GlowTrails:
         # Denormalize the image from [0, 1] to [0, 255] and convert to uint8
         frame_bgr_uint8 = (frame_bgr * 255).astype('uint8')
 
+        # **Mirror the video output horizontally**
+        if self.mirror:
+            frame_bgr_uint8 = cv2.flip(frame_bgr_uint8, 1)  # 1 denotes horizontal flipping
+
+        # **Resize the frame to fit the screen**
+        frame_resized = cv2.resize(
+            frame_bgr_uint8, 
+            (self.screen_width, self.screen_height), 
+            interpolation=cv2.INTER_AREA
+        )
+
         # Display the image
-        cv2.imshow('Output', frame_bgr_uint8)
+        cv2.imshow('Output', frame_resized)
         if cv2.waitKey(1) & 0xFF == ord('q'):
             self.stop()
 
@@ -168,6 +211,79 @@ class GlowTrails:
         cv2.destroyAllWindows()
         print("Resources released. Exiting.")
 
+def parse_arguments():
+    """
+    Parse and validate command-line arguments.
+    Returns:
+        args: Parsed arguments
+    """
+    parser = argparse.ArgumentParser(description="GlowTrails Video Processor")
+    
+    parser.add_argument(
+        '--threshold', 
+        type=float, 
+        default=DEFAULT_THRESHOLD,
+        help=f"Threshold for luminance (0-1). Default is {DEFAULT_THRESHOLD}."
+    )
+    parser.add_argument(
+        '--decay', 
+        type=float, 
+        default=DEFAULT_DECAY,
+        help=f"Decay factor for glow trails. Default is {DEFAULT_DECAY}."
+    )
+    parser.add_argument(
+        '--width', 
+        type=int, 
+        default=DEFAULT_WIDTH,
+        help=f"Camera resolution width in pixels. Default is {DEFAULT_WIDTH}."
+    )
+    parser.add_argument(
+        '--height', 
+        type=int, 
+        default=DEFAULT_HEIGHT,
+        help=f"Camera resolution height in pixels. Default is {DEFAULT_HEIGHT}."
+    )
+    parser.add_argument(
+        '--mirror',
+        type=str,
+        default='True',
+        help="Mirror the video output horizontally. Default is True."
+    )
+    
+    args = parser.parse_args()
+    
+    # Validate threshold
+    if not (0.0 <= args.threshold <= 1.0):
+        parser.error("Threshold must be between 0 and 1.")
+    
+    # Validate decay
+    if not (0.0 < args.decay < 1.0):
+        parser.error("Decay must be a float between 0 and 1 (non-inclusive).")
+    
+    # Validate width and height
+    if args.width <= 0:
+        parser.error("Width must be a positive integer.")
+    if args.height <= 0:
+        parser.error("Height must be a positive integer.")
+    
+    # Validate mirror
+    if args.mirror.lower() not in ['true', 'false']:
+        parser.error("Mirror must be a boolean value (True or False).")
+    
+    return args
+
 if __name__ == "__main__":
-    processor = GlowTrails()
-    processor.process_stream()
+    args = parse_arguments()
+    
+    try:
+        processor = GlowTrails(
+            threshold=args.threshold,
+            decay=args.decay,
+            camera_width=args.width,
+            camera_height=args.height,
+            mirror=str_to_bool(args.mirror)
+        )
+        processor.process_stream()
+    except Exception as e:
+        print(f"Failed to start GlowTrails: {e}")
+        sys.exit(1)
