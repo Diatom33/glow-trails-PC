@@ -25,6 +25,7 @@ class GlowTrails:
         camera_width: int = DEFAULT_WIDTH,
         camera_height: int = DEFAULT_HEIGHT,
         mirror: bool = True,
+        export: bool = False,
         device: torch.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     ):
         self.threshold = threshold
@@ -33,6 +34,9 @@ class GlowTrails:
         self.camera_height = camera_height
         self.device = device
         self.mirror = mirror
+        self.export = export
+        self.video_writer = None
+        
         # Initialize the webcam with a specific backend to avoid GStreamer warning
         self.cap = cv2.VideoCapture(0, cv2.CAP_V4L2)  # Using V4L2 backend
         if not self.cap.isOpened():
@@ -83,6 +87,26 @@ class GlowTrails:
         # Create a named window with WINDOW_NORMAL to allow resizing
         cv2.namedWindow('Output', cv2.WINDOW_NORMAL)
         cv2.setWindowProperty('Output', cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN)
+        
+        # Initialize VideoWriter if export is enabled
+        if self.export and isinstance(self.export, str):
+            try:
+                # Define the codec and create VideoWriter object
+                fourcc_out = cv2.VideoWriter_fourcc(*'MJPG')
+                self.video_writer = cv2.VideoWriter(
+                    self.export, 
+                    fourcc_out, 
+                    self.webcam_fps, 
+                    (self.screen_width, self.screen_height)
+                )
+                if not self.video_writer.isOpened():
+                    print(f"Warning: Unable to open video file for writing at {self.export}. Export disabled.")
+                    self.video_writer = None
+                else:
+                    print(f"Video output will be saved to {self.export}.")
+            except Exception as e:
+                print(f"Error initializing video writer: {e}. Export disabled.")
+                self.video_writer = None
 
     def get_luminance(self, image: torch.Tensor) -> torch.Tensor:
         """
@@ -163,6 +187,10 @@ class GlowTrails:
         cv2.imshow('Output', frame_resized)
         if cv2.waitKey(1) & 0xFF == ord('q'):
             self.stop()
+        
+        # Write the frame to the video file if exporting is enabled
+        if self.video_writer:
+            self.video_writer.write(frame_resized)
 
     def process_stream(self):
         """
@@ -208,6 +236,9 @@ class GlowTrails:
         Release resources and close windows.
         """
         self.cap.release()
+        if self.video_writer:
+            self.video_writer.release()
+            print(f"Video file saved to {self.export}.")
         cv2.destroyAllWindows()
         print("Resources released. Exiting.")
 
@@ -249,6 +280,13 @@ def parse_arguments():
         default='True',
         help="Mirror the video output horizontally. Default is True."
     )
+    # New argument for exporting video
+    parser.add_argument(
+        '--export',
+        type=str,
+        default='False',
+        help="Export the video output to a file. Provide the file path or 'False' to disable. Default is False."
+    )
     
     args = parser.parse_args()
     
@@ -270,6 +308,15 @@ def parse_arguments():
     if args.mirror.lower() not in ['true', 'false']:
         parser.error("Mirror must be a boolean value (True or False).")
     
+    # Validate export
+    if args.export.lower() not in ['true', 'false']:
+        # If not strictly 'true' or 'false', treat as file path
+        export = args.export
+    else:
+        export = str_to_bool(args.export)
+    
+    args.export = export
+    
     return args
 
 if __name__ == "__main__":
@@ -281,7 +328,8 @@ if __name__ == "__main__":
             decay=args.decay,
             camera_width=args.width,
             camera_height=args.height,
-            mirror=str_to_bool(args.mirror)
+            mirror=str_to_bool(args.mirror),
+            export=args.export
         )
         processor.process_stream()
     except Exception as e:
