@@ -123,13 +123,11 @@ class GlowTrails:
         Both images are expected to be on the same device.
         """
         with torch.no_grad():  # Disable gradient calculations for inference
-            luminance = self.get_luminance(image_current)
-            mask = luminance > self.threshold  # Shape: (H, W)
+            luminance_next = self.get_luminance(image_next)
+            mask = luminance_next > self.threshold  # Shape: (H, W)
             mask = mask.unsqueeze(0)  # Shape: (1, H, W)
-            # Use in-place operations to reduce memory overhead
-            out = image_current * self.decay
-            out *= mask
-            out += image_next * ~mask
+            # Apply weighted average for new trails with 80:20 new:old ratio
+            out = image_current * (~mask) + (image_current * 0.6 + image_next * 0.4) * mask
         return out
 
     def get_inputs(self) -> torch.Tensor:

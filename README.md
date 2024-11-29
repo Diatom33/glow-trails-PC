@@ -1,7 +1,7 @@
 # glow-trails-PC
 Linux reimplementation of the FPGA video processing in [kiran-vuksanaj/glow-trails](https://github.com/kiran-vuksanaj/glow-trails). This is intended to make glowy spinning arts props look cooler.
 
-Takes webcam input and outputs a processed video stream, where each pixel above a certain brightness threshold is maintained into the next frame with some decay factor, while other pixels are replaced with the next frame.
+Takes webcam input and outputs a processed video stream, where pixels above a certain brightness threshold genrerate glow trails.
 
 May require parameter tuning for your specific use case. In its current state, requires a CUDA-enabled GPU.
 
