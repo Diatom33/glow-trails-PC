@@ -6,7 +6,7 @@ import time
 threshold = 0.85
 decay = 0.999
 
-class AIProcessor:
+class GlowTrails:
     def __init__(
         self, 
         device: torch.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -140,5 +140,5 @@ class AIProcessor:
         print("Resources released. Exiting.")
 
 if __name__ == "__main__":
-    processor = AIProcessor()
+    processor = GlowTrails()
     processor.process_stream()
