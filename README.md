@@ -1,5 +1,5 @@
 # glow-trails-PC
-Linux reimplementation of the FPGA video processing in [kiran-vuksanaj/glow-trails](https://github.com/kiran-vuksanaj/glow-trails). This is intended to make glowy spinning arts props look cooler.
+Linux reimplementation of the FPGA video processing in [kiran-vuksanaj/glow-trails](https://github.com/kiran-vuksanaj/glow-trails). This is intended to make glowy spinning arts props look cooler. Both repos implement a very similar transformation to [Drex's ghost trails](https://www.youtube.com/watch?v=ZhylHYvUFT4), but in real time as opposed to being purely an after effect.
 
 Takes webcam input and outputs a processed video stream, where pixels above a certain brightness threshold genrerate glow trails.
 
