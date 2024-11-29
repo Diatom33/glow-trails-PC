@@ -3,7 +3,8 @@ import cv2
 import time
 
 # Adjusted threshold to match normalized scale (0-1)
-threshold = 0.85
+# threshold = 0.85
+threshold=1
 decay = 0.999
 
 class GlowTrails:
@@ -17,7 +18,30 @@ class GlowTrails:
         if not self.cap.isOpened():
             raise IOError("Cannot open webcam")
         
-        # Get webcam's native FPS
+        # Set pixel format to MJPG
+        fourcc = cv2.VideoWriter_fourcc(*'MJPG')
+        if not self.cap.set(cv2.CAP_PROP_FOURCC, fourcc):
+            print("Warning: Unable to set MJPG format. The webcam might not support it.")
+        else:
+            print("MJPG format set successfully.")
+
+        # Set webcam resolution to Full HD
+        if not self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1920):
+            print("Warning: Unable to set frame width to 1920.")
+        if not self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 1080):
+            print("Warning: Unable to set frame height to 1080.")
+        
+        # Set webcam's FPS
+        if not self.cap.set(cv2.CAP_PROP_FPS, 30):
+            print("Warning: Unable to set FPS to 30.")
+        
+        # Retrieve and verify pixel format
+        current_fourcc = int(self.cap.get(cv2.CAP_PROP_FOURCC))
+        fourcc_str = "".join([chr((current_fourcc >> 8 * i) & 0xFF) for i in range(4)])
+        print(f"Current FOURCC code: {fourcc_str}")
+        if fourcc_str != 'MJPG':
+            print("Warning: The webcam is not using MJPG format.")
+        
         self.webcam_fps = self.cap.get(cv2.CAP_PROP_FPS)
         if self.webcam_fps <= 0:
             # Fallback to common default if unable to get FPS
@@ -34,9 +58,8 @@ class GlowTrails:
         Image tensor shape: (C, H, W)
         Returns: (H, W)
         """
-        # Calculate luminance using standard coefficients
-        r, g, b = image[0], image[1], image[2]  # RGB channels
-        return 0.2126*r + 0.7152*g + 0.0722*b
+        # Vectorized luminance calculation using torch operations
+        return (0.2126 * image[0] + 0.7152 * image[1] + 0.0722 * image[2])
 
     def transform(self, image_current: torch.Tensor, image_next: torch.Tensor) -> torch.Tensor:
         """
@@ -44,9 +67,13 @@ class GlowTrails:
         Both images are expected to be on the same device.
         """
         with torch.no_grad():  # Disable gradient calculations for inference
-            mask = self.get_luminance(image_current) > threshold  # Shape: (H, W)
-            mask = mask.unsqueeze(0).float()  # Shape: (1, H, W)
-            out = decay*image_current * mask + image_next * (1 - mask)
+            luminance = self.get_luminance(image_current)
+            mask = luminance > threshold  # Shape: (H, W)
+            mask = mask.unsqueeze(0)  # Shape: (1, H, W)
+            # Use in-place operations to reduce memory overhead
+            out = image_current * decay
+            out *= mask
+            out += image_next * ~mask
         return out
 
     def get_inputs(self) -> torch.Tensor:
@@ -58,7 +85,7 @@ class GlowTrails:
         if not ret:
             raise IOError("Failed to capture image from webcam")
 
-        # Convert the image from BGR to RGB
+        # Convert the image from BGR to RGB and resize if necessary
         frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
 
         # Convert to torch tensor and normalize to [0, 1]
@@ -68,7 +95,7 @@ class GlowTrails:
         tensor = tensor.permute(2, 0, 1)
 
         # Move to CUDA
-        tensor = tensor.to(self.device)
+        tensor = tensor.to(self.device, non_blocking=True)
 
         return tensor
 
@@ -112,17 +139,19 @@ class GlowTrails:
                 
                 # Calculate instantaneous FPS
                 frame_time = time.time() - frame_start_time
-                instant_fps = 1 / frame_time
+                instant_fps = 1 / frame_time if frame_time > 0 else 0
                 
                 # Calculate average FPS
-                frame_count += 1
-                avg_fps = frame_count / (time.time() - start_time_avg)
+                elapsed_time = time.time() - start_time_avg
+                avg_fps = frame_count / elapsed_time if elapsed_time > 0 else 0
                 
                 # Calculate FPS ratio (actual/webcam)
-                fps_ratio = avg_fps / self.webcam_fps
+                fps_ratio = avg_fps / self.webcam_fps if self.webcam_fps > 0 else 0
                 
                 print(f"FPS: {instant_fps:5.1f} | Avg FPS: {avg_fps:5.1f} | "
                       f"Ratio to webcam ({self.webcam_fps:.1f}): {fps_ratio:4.2f}")
+                
+                frame_count += 1
                 
         except KeyboardInterrupt:
             print("Interrupted by user.")
