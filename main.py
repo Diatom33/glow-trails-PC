@@ -4,8 +4,8 @@ import time
 
 # Adjusted threshold to match normalized scale (0-1)
 # threshold = 0.85
-threshold=1
-decay = 0.999
+threshold=0.3
+decay = 0.95
 
 class GlowTrails:
     def __init__(
@@ -26,10 +26,10 @@ class GlowTrails:
             print("MJPG format set successfully.")
 
         # Set webcam resolution to Full HD
-        if not self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1920):
-            print("Warning: Unable to set frame width to 1920.")
-        if not self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 1080):
-            print("Warning: Unable to set frame height to 1080.")
+        if not self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280):
+            print("Warning: Unable to set frame width to 1280.")
+        if not self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720):
+            print("Warning: Unable to set frame height to 720.")
         
         # Set webcam's FPS
         if not self.cap.set(cv2.CAP_PROP_FPS, 30):
