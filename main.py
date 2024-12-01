@@ -29,6 +29,7 @@ class GlowTrails:
         camera_height: int = DEFAULT_HEIGHT,
         mirror: bool = True,
         export: bool = False,
+        export_fps: str = 'average',
         device: torch.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     ):
         self.threshold = threshold
@@ -38,7 +39,10 @@ class GlowTrails:
         self.device = device
         self.mirror = mirror
         self.export = export
+        self.export_fps = export_fps
         self.video_writer = None
+        self.frames_buffer = []  # Buffer to store frames for initial FPS calculation
+        self.initial_frames = 30  # Number of frames to calculate average FPS before initializing VideoWriter
         
         # Initialize the webcam with a specific backend to avoid GStreamer warning
         self.cap = cv2.VideoCapture(0, cv2.CAP_V4L2)  # Using V4L2 backend
@@ -94,10 +98,13 @@ class GlowTrails:
         # Initialize VideoWriter if export is enabled
         if self.export:
             if isinstance(self.export, str):
-                self.initialize_video_writer(self.export)
+                # Delay initialization of VideoWriter until average FPS is calculated
+                print("Export is enabled. VideoWriter will initialize after calculating average FPS.")
             else:
                 print("Warning: Export parameter should be a file path or 'False'. Export disabled.")
                 self.export = False
+
+        self.video_writer_initialized = False  # Flag to check if VideoWriter is initialized
 
     def update_current_monitor_resolution(self):
         """
@@ -143,7 +150,7 @@ class GlowTrails:
             print(f"Warning: Unable to get window position due to: {e}")
             return None
 
-    def initialize_video_writer(self, export_path: str):
+    def initialize_video_writer(self, avg_fps: float):
         """
         Initialize the VideoWriter with the appropriate codec based on file extension.
         """
@@ -156,8 +163,9 @@ class GlowTrails:
             # Add more mappings as needed
         }
 
+        export_path = self.export
         # Extract file extension
-        _, ext = os.path.splitext(export_path)
+        _, ext = os.path.splitext(export_path) #type: ignore
         ext = ext.lower()
 
         # Get the corresponding FOURCC code
@@ -168,18 +176,21 @@ class GlowTrails:
 
         fourcc_out = cv2.VideoWriter_fourcc(*fourcc_code)
         try:
-            # Define the codec and create VideoWriter object with camera resolution
+            # Define the codec and create VideoWriter object with chosen FPS
+            chosen_fps = avg_fps if self.export_fps == 'average' else self.webcam_fps
             self.video_writer = cv2.VideoWriter(
                 export_path, 
                 fourcc_out, 
-                self.webcam_fps, 
+                chosen_fps, 
                 (self.camera_width, self.camera_height)
             )
             if not self.video_writer.isOpened():
                 print(f"Warning: Unable to open video file for writing at {export_path}. Export disabled.")
                 self.video_writer = None
             else:
-                print(f"Video output will be saved to {export_path} with codec '{fourcc_code}'.")
+                fps_type = "average" if self.export_fps == 'average' else "webcam"
+                print(f"Video output will be saved to {export_path} with codec '{fourcc_code}' at {fps_type} FPS ({chosen_fps:.2f}).")
+                self.video_writer_initialized = True
         except Exception as e:
             print(f"Error initializing video writer: {e}. Export disabled.")
             self.video_writer = None
@@ -250,7 +261,7 @@ class GlowTrails:
         if self.mirror:
             frame_bgr_uint8 = cv2.flip(frame_bgr_uint8, 1)  # 1 denotes horizontal flipping
 
-        # **Write the original processed frame to the video file if exporting is enabled**
+        # **Write the processed frame to the video file if exporting is enabled and initialized**
         if self.video_writer:
             self.video_writer.write(frame_bgr_uint8)
 
@@ -323,6 +334,25 @@ class GlowTrails:
                 
                 frame_count += 1
 
+                # Start of Selection
+                # Buffer frames to calculate average FPS before initializing VideoWriter
+                if self.export and not self.video_writer_initialized:
+                    frame_bgr_uint8 = transformed.cpu().numpy().astype('uint8')
+                    frame_bgr_uint8 = cv2.cvtColor(frame_bgr_uint8, cv2.COLOR_RGB2BGR)
+                    self.frames_buffer.append(frame_bgr_uint8)
+                    if frame_count >= self.initial_frames:
+                        avg_fps_calculated = frame_count / elapsed_time
+                        self.initialize_video_writer(avg_fps_calculated)
+                        # Write buffered frames
+                        if self.video_writer:
+                            for buffered_frame in self.frames_buffer:
+                                self.video_writer.write(buffered_frame)
+                        self.frames_buffer = []  # Clear buffer
+                if self.video_writer:
+                    for buffered_frame in self.frames_buffer:
+                        self.video_writer.write(buffered_frame)
+                self.frames_buffer = []  # Clear buffer
+
                 # Periodically check for screen resolution changes
                 current_time = time.time()
                 if current_time - last_check_time > check_interval:
@@ -392,6 +422,14 @@ def parse_arguments():
         default='False',
         help="Export the video output to a file. Provide the file path with desired extension or 'False' to disable. Default is False."
     )
+    # New argument for export FPS option
+    parser.add_argument(
+        '--export-fps',
+        type=str,
+        choices=['average', 'webcam'],
+        default='average',
+        help="Choose the FPS for the exported video: 'average' to use the calculated average FPS or 'webcam' to use the webcam's FPS. Default is 'average'."
+    )
     
     args = parser.parse_args()
     
@@ -434,7 +472,8 @@ if __name__ == "__main__":
             camera_width=args.width,
             camera_height=args.height,
             mirror=str_to_bool(args.mirror),
-            export=args.export
+            export=args.export,
+            export_fps=args.export_fps  # Pass the new export_fps argument
         )
         processor.process_stream()
     except Exception as e:
