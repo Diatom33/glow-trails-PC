@@ -4,6 +4,7 @@ import time
 import tkinter as tk
 import argparse
 import sys
+import os
 
 # Default configuration values
 DEFAULT_THRESHOLD = 0.3
@@ -89,24 +90,53 @@ class GlowTrails:
         cv2.setWindowProperty('Output', cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN)
         
         # Initialize VideoWriter if export is enabled
-        if self.export and isinstance(self.export, str):
-            try:
-                # Define the codec and create VideoWriter object
-                fourcc_out = cv2.VideoWriter_fourcc(*'MJPG')
-                self.video_writer = cv2.VideoWriter(
-                    self.export, 
-                    fourcc_out, 
-                    self.webcam_fps, 
-                    (self.screen_width, self.screen_height)
-                )
-                if not self.video_writer.isOpened():
-                    print(f"Warning: Unable to open video file for writing at {self.export}. Export disabled.")
-                    self.video_writer = None
-                else:
-                    print(f"Video output will be saved to {self.export}.")
-            except Exception as e:
-                print(f"Error initializing video writer: {e}. Export disabled.")
+        if self.export:
+            if isinstance(self.export, str):
+                self.initialize_video_writer(self.export)
+            else:
+                print("Warning: Export parameter should be a file path or 'False'. Export disabled.")
+                self.export = False
+
+    def initialize_video_writer(self, export_path: str):
+        """
+        Initialize the VideoWriter with the appropriate codec based on file extension.
+        """
+        # Mapping of file extensions to FOURCC codes
+        extension_fourcc_map = {
+            '.avi': 'MJPG',
+            '.mp4': 'mp4v',
+            '.mkv': 'X264',
+            '.mov': 'avc1',
+            # Add more mappings as needed
+        }
+
+        # Extract file extension
+        _, ext = os.path.splitext(export_path)
+        ext = ext.lower()
+
+        # Get the corresponding FOURCC code
+        fourcc_code = extension_fourcc_map.get(ext)
+        if not fourcc_code:
+            print(f"Warning: Unsupported file extension '{ext}'. Export disabled.")
+            return
+
+        fourcc_out = cv2.VideoWriter_fourcc(*fourcc_code)
+        try:
+            # Define the codec and create VideoWriter object
+            self.video_writer = cv2.VideoWriter(
+                export_path, 
+                fourcc_out, 
+                self.webcam_fps, 
+                (self.screen_width, self.screen_height)
+            )
+            if not self.video_writer.isOpened():
+                print(f"Warning: Unable to open video file for writing at {export_path}. Export disabled.")
                 self.video_writer = None
+            else:
+                print(f"Video output will be saved to {export_path} with codec '{fourcc_code}'.")
+        except Exception as e:
+            print(f"Error initializing video writer: {e}. Export disabled.")
+            self.video_writer = None
 
     def get_luminance(self, image: torch.Tensor) -> torch.Tensor:
         """
@@ -283,7 +313,7 @@ def parse_arguments():
         '--export',
         type=str,
         default='False',
-        help="Export the video output to a file. Provide the file path or 'False' to disable. Default is False."
+        help="Export the video output to a file. Provide the file path with desired extension or 'False' to disable. Default is False."
     )
     
     args = parser.parse_args()
@@ -307,11 +337,11 @@ def parse_arguments():
         parser.error("Mirror must be a boolean value (True or False).")
     
     # Validate export
-    if args.export.lower() not in ['true', 'false']:
-        # If not strictly 'true' or 'false', treat as file path
-        export = args.export
-    else:
+    if args.export.lower() in ['true', 'false']:
         export = str_to_bool(args.export)
+    else:
+        # Assume it's a file path
+        export = args.export
     
     args.export = export
     

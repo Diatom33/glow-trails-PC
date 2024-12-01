@@ -21,4 +21,4 @@ Options:
 
 Height and width must match one of the resolutions of the webcam. (findable with `v4l2-ctl --list-formats-ext -d /dev/video0`)
 
-Allowed export types are those compatible with the chosen video codec (default is MJPEG, with outputs such as `.avi`, `.mp4`, `.mov`, `.mkv`,...).
+Allows a wide range of export formats, it probably has the one you need. Hasn't been extensively tested.
