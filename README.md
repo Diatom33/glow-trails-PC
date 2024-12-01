@@ -3,7 +3,7 @@ Linux reimplementation of the FPGA video processing in [kiran-vuksanaj/glow-trai
 
 Takes webcam input and outputs a processed video stream, where pixels above a certain brightness threshold genrerate glow trails.
 
-May require parameter tuning for your specific use case. In its current state, requires a CUDA-enabled GPU.
+May require parameter tuning for your specific use case. May require tuning a lot of other stuff, frankly, I made this to work for my own setup and haven't made it maximally customizable yet. In its current state, requires a CUDA-enabled GPU.
 
 ## Usage
 

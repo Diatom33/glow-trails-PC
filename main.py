@@ -5,6 +5,8 @@ import tkinter as tk
 import argparse
 import sys
 import os
+import numpy as np
+from screeninfo import get_monitors
 
 # Default configuration values
 DEFAULT_THRESHOLD = 0.3
@@ -80,10 +82,10 @@ class GlowTrails:
         # Retrieve screen dimensions
         root = tk.Tk()
         root.withdraw()  # Hide the root window
-        self.screen_width = root.winfo_screenwidth()
-        self.screen_height = root.winfo_screenheight()
         root.destroy()
-        print(f"Screen Resolution: {self.screen_width}x{self.screen_height}")
+
+        # Initialize current monitor resolution
+        self.update_current_monitor_resolution()
 
         # Create a named window with WINDOW_NORMAL to allow resizing
         cv2.namedWindow('Output', cv2.WINDOW_NORMAL)
@@ -96,6 +98,50 @@ class GlowTrails:
             else:
                 print("Warning: Export parameter should be a file path or 'False'. Export disabled.")
                 self.export = False
+
+    def update_current_monitor_resolution(self):
+        """
+        Update the current monitor's resolution based on the window's position.
+        """
+        # Attempt to get the window's current position
+        window_pos = self.get_window_position()
+        if window_pos is None:
+            # Fallback to primary monitor if unable to get window position
+            monitor = get_monitors()[0]
+        else:
+            x, y = window_pos
+            # Find the monitor that contains the window's position
+            monitor = next(
+                (m for m in get_monitors() if m.x <= x < m.x + m.width and m.y <= y < m.y + m.height),
+                get_monitors()[0]
+            )
+        
+        self.screen_width = monitor.width
+        self.screen_height = monitor.height
+        print(f"Current Monitor Resolution: {self.screen_width}x{self.screen_height}")
+
+    def get_window_position(self):
+        """
+        Get the current position of the OpenCV window.
+        Note: OpenCV does not provide a direct method to get window position.
+        This function uses a workaround for Windows using pygetwindow.
+        """
+        try:
+            import subprocess
+            # Use wmctrl to list all windows with geometry
+            output = subprocess.check_output(['wmctrl', '-lG']).decode('utf-8')
+            for line in output.splitlines():
+                parts = line.split()
+                x = int(parts[2])
+                y = int(parts[3])
+                title = ' '.join(parts[7:])
+                
+                if 'Output' in title:
+                    return (x, y)
+            return None
+        except Exception as e:
+            print(f"Warning: Unable to get window position due to: {e}")
+            return None
 
     def initialize_video_writer(self, export_path: str):
         """
@@ -122,12 +168,12 @@ class GlowTrails:
 
         fourcc_out = cv2.VideoWriter_fourcc(*fourcc_code)
         try:
-            # Define the codec and create VideoWriter object
+            # Define the codec and create VideoWriter object with camera resolution
             self.video_writer = cv2.VideoWriter(
                 export_path, 
                 fourcc_out, 
                 self.webcam_fps, 
-                (self.screen_width, self.screen_height)
+                (self.camera_width, self.camera_height)
             )
             if not self.video_writer.isOpened():
                 print(f"Warning: Unable to open video file for writing at {export_path}. Export disabled.")
@@ -185,7 +231,7 @@ class GlowTrails:
 
     def send_outputs(self, tensor: torch.Tensor):
         """
-        Display the tensor as an image on the screen.
+        Display the tensor as an image on the screen with padding to match screen size.
         Tensor shape: (C, H, W)
         """
         # Move tensor to CPU and convert to NumPy array
@@ -204,21 +250,44 @@ class GlowTrails:
         if self.mirror:
             frame_bgr_uint8 = cv2.flip(frame_bgr_uint8, 1)  # 1 denotes horizontal flipping
 
-        # **Resize the frame to fit the screen**
+        # **Write the original processed frame to the video file if exporting is enabled**
+        if self.video_writer:
+            self.video_writer.write(frame_bgr_uint8)
+
+        # **Resize the frame while maintaining aspect ratio for display**
+        frame_height, frame_width = frame_bgr_uint8.shape[:2]
+        screen_aspect = self.screen_width / self.screen_height
+        frame_aspect = frame_width / frame_height
+
+        if frame_aspect > screen_aspect:
+            # Frame is wider than screen
+            new_width = self.screen_width
+            new_height = int(new_width / frame_aspect)
+        else:
+            # Frame is taller than screen
+            new_height = self.screen_height
+            new_width = int(new_height * frame_aspect)
+
         frame_resized = cv2.resize(
             frame_bgr_uint8, 
-            (self.screen_width, self.screen_height), 
+            (new_width, new_height), 
             interpolation=cv2.INTER_AREA
         )
 
-        # Display the image
-        cv2.imshow('Output', frame_resized)
+        # **Create a black background image for padding**
+        frame_display = np.zeros((self.screen_height, self.screen_width, 3), dtype='uint8')
+
+        # **Calculate top-left corner for centered placement**
+        x_offset = (self.screen_width - new_width) // 2
+        y_offset = (self.screen_height - new_height) // 2
+
+        # **Place the resized frame onto the black background**
+        frame_display[y_offset:y_offset + new_height, x_offset:x_offset + new_width] = frame_resized
+
+        # **Display the padded image**
+        cv2.imshow('Output', frame_display)
         if cv2.waitKey(1) & 0xFF == ord('q'):
             self.stop()
-        
-        # Write the frame to the video file if exporting is enabled
-        if self.video_writer:
-            self.video_writer.write(frame_resized)
 
     def process_stream(self):
         """
@@ -228,6 +297,8 @@ class GlowTrails:
             image_current = self.get_inputs()
             frame_count = 0
             start_time_avg = time.time()
+            last_check_time = time.time()
+            check_interval = 1  # seconds
             
             while True:
                 frame_start_time = time.time()
@@ -251,6 +322,12 @@ class GlowTrails:
                       f"Ratio to webcam ({self.webcam_fps:.1f}): {fps_ratio:4.2f}")
                 
                 frame_count += 1
+
+                # Periodically check for screen resolution changes
+                current_time = time.time()
+                if current_time - last_check_time > check_interval:
+                    self.update_current_monitor_resolution()
+                    last_check_time = current_time
                 
         except KeyboardInterrupt:
             print("Interrupted by user.")
