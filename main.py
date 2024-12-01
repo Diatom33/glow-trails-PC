@@ -127,7 +127,7 @@ class GlowTrails:
             mask = luminance_next > self.threshold  # Shape: (H, W)
             mask = mask.unsqueeze(0)  # Shape: (1, H, W)
             # Apply weighted average for new trails with 80:20 new:old ratio
-            out = image_current * (~mask) + (image_current * 0.6 + image_next * 0.4) * mask
+            out = image_current * (~mask) * self.decay + (0.25 * image_current + 0.75 * image_next) * mask
         return out
 
     def get_inputs(self) -> torch.Tensor:
